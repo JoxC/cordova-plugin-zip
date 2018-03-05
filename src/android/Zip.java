@@ -5,10 +5,16 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.FileNotFoundException;
+import java.util.Enumeration;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-
+import java.util.zip.ZipFile;
+import java.util.zip.ZipEntry;
+// import org.apache.commons.compress.archivers.zip.ZipFile;
+// import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.io.IOUtils;
 
 import android.net.Uri;
 import org.apache.cordova.CallbackContext;
@@ -36,7 +42,8 @@ public class Zip extends CordovaPlugin {
     private void unzip(final CordovaArgs args, final CallbackContext callbackContext) {
         this.cordova.getThreadPool().execute(new Runnable() {
             public void run() {
-                unzipSync(args, callbackContext);
+                //unzipSync(args, callbackContext);
+                unpack(args, callbackContext);
             }
         });
     }
@@ -48,6 +55,76 @@ public class Zip extends CordovaPlugin {
         int c = is.read();
         int d = is.read();
         return a | b << 8 | c << 16 | d << 24;
+    }
+
+    private void unpack(CordovaArgs args, CallbackContext callbackContext) {
+        ZipFile zip = null;
+        String errorMessage = "";
+        try {
+            String zipFileName = args.getString(0);
+            String outputDirectory = args.getString(1);
+
+            // Since Cordova 3.3.0 and release of File plugins, files are accessed via cdvfile://
+            // Accept a path or a URI for the source zip.
+            Uri zipUri = getUriForArg(zipFileName);
+            Uri outputUri = getUriForArg(outputDirectory);
+
+            CordovaResourceApi resourceApi = webView.getResourceApi();
+
+            File zipFile = resourceApi.mapUriToFile(zipUri);
+            if (zipFile == null || !zipFile.exists()) {
+                errorMessage = "Zip file does not exist";
+                callbackContext.error(errorMessage);
+                Log.e(LOG_TAG, errorMessage);
+                return;
+            }
+
+            File targetDir = resourceApi.mapUriToFile(outputUri);
+
+            zip = new ZipFile(zipFile.getAbsoluteFile());
+            final Enumeration<? extends ZipEntry> entries = zip.entries();
+            boolean anyEntries = false;
+            while(entries.hasMoreElements()) {
+                anyEntries = true;
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory()) {
+                    mkdirsOrThrow(new File(targetDir, entry.getName()));
+                    continue;
+                }
+                final File entryDestination = new File(targetDir,  entry.getName());
+                mkdirsOrThrow(entryDestination.getParentFile());
+                final InputStream in = zip.getInputStream(entry);
+                final OutputStream out = new FileOutputStream(entryDestination);
+                IOUtils.copy(in, out);
+                IOUtils.closeQuietly(in);
+                IOUtils.closeQuietly(out);
+            }
+            if (anyEntries)
+                callbackContext.success();
+            else
+                callbackContext.error("Bad zip file");
+        } catch (IOException e) {
+            errorMessage = "IO error";
+            Log.e(LOG_TAG, errorMessage, e);
+        } catch (JSONException e) {
+            errorMessage = "args json parse error";
+            Log.e(LOG_TAG, errorMessage, e);
+        } finally {
+            if (errorMessage.length() > 0) {
+                callbackContext.error(errorMessage);
+            }
+            if (zip!= null) try {
+                zip.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return;
+    }
+
+    private void mkdirsOrThrow(File file) {
+        file.mkdirs();
+        return;
     }
 
     private void unzipSync(CordovaArgs args, CallbackContext callbackContext) {
@@ -204,3 +281,4 @@ public class Zip extends CordovaPlugin {
         }
     }
 }
+
